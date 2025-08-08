@@ -1,11 +1,16 @@
 import json
+import oracledb
 
+from kafka import KafkaConsumer
+from config_loader import load_config
+from db_writer import OracleAnomalyWriter
 from model import ImprovedOnlineFarePredictor
 
 
+
+
 def main():
-    from kafka import KafkaConsumer
-    from config_loader import load_config
+
 
     cfg = load_config("config.ini")
     topic = cfg["kafka"]["topic"]
@@ -14,6 +19,22 @@ def main():
     threshold = float(cfg["app"]["error_threshold"])
     check_performance = int(cfg["app"]["check_performance"])
     warmup_count = int(cfg["app"]["warmup_count"])
+
+    user = cfg["oracle"]["user"]
+    password = cfg["oracle"]["password"]
+    host = cfg["oracle"]["host"]
+    port = cfg["oracle"]["port"]
+    service = cfg["oracle"]["service"]
+
+    dsn = f"{host}:{port}/{service}"
+
+    db_writer = OracleAnomalyWriter(user, password, dsn)
+
+    #BURDA KALDIKKK!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+    # card_no ve boarding_date_time ve sam_seq_no ve trans flag ve tap_id(dolu olmayabilir)
+
 
     consumer = KafkaConsumer(
         topic,

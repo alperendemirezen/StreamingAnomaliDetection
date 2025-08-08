@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/anomaliDeneme.iml" filepath="$PROJECT_DIR$/.idea/anomaliDeneme.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/StreamingAnomaliDetection.iml" filepath="$PROJECT_DIR$/.idea/StreamingAnomaliDetection.iml" />
     </modules>
   </component>
 </project>

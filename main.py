@@ -1,4 +1,3 @@
-# main.py
 import json
 from kafka import KafkaConsumer
 from model import OnlineFarePredictor
@@ -6,11 +5,12 @@ from config_loader import load_config
 
 def main():
     cfg = load_config("config.ini")
-
     topic = cfg["kafka"]["topic"]
     bootstrap_servers = cfg["kafka"]["bootstrap_servers"]
     group_id = cfg["kafka"]["group_id"]
     threshold = float(cfg["app"]["error_threshold"])
+    #rider ve tariff_number ve customer_cnt ye böl
+    #card_no ve boarding_date_time ve sam_seq_no ve trans flag ve tap_id(dolu olmayabilir) offset cusflag routecode amount
 
     consumer = KafkaConsumer(
         topic,
@@ -40,10 +40,10 @@ def main():
 
         if anomaly:
             print(f"🚨 [ANOMALY] Offset={offset} | Route={route} | Flag={flag} | "
-                  f"Actual={amount} | Predicted={y_pred:.2f} | Error={error:.2f}")
+                  f"Amount={amount} | Predicted={y_pred:.2f} | Error={error:.2f}")
         else:
             print(f"✅ [NORMAL]  Offset={offset} | Route={route} | Flag={flag} | "
-                  f"Actual={amount} | Predicted={y_pred:.2f} | Error={error:.2f}")
+                  f"Amount={amount} | Predicted={y_pred:.2f} | Error={error:.2f}")
 
 if __name__ == "__main__":
     main()

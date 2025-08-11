@@ -4,13 +4,12 @@ import oracledb
 from kafka import KafkaConsumer
 from config_loader import load_config
 from db_writer import OracleAnomalyWriter
-from model import ImprovedOnlineFarePredictor
+from model import AmountPredictor
 
 
 
 
 def main():
-
 
     cfg = load_config("config.ini")
     topic = cfg["kafka"]["topic"]
@@ -20,21 +19,24 @@ def main():
     check_performance = int(cfg["app"]["check_performance"])
     warmup_count = int(cfg["app"]["warmup_count"])
 
-    user = cfg["oracle"]["user"]
-    password = cfg["oracle"]["password"]
-    host = cfg["oracle"]["host"]
-    port = cfg["oracle"]["port"]
-    service = cfg["oracle"]["service"]
+    user = cfg["database"]["user"]
+    password = cfg["database"]["password"]
+    host = cfg["database"]["host"]
+    port = cfg["database"]["port"]
+    service = cfg["database"]["service"]
 
     dsn = f"{host}:{port}/{service}"
 
     db_writer = OracleAnomalyWriter(user, password, dsn)
 
-    #BURDA KALDIKKK!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-
-    # card_no ve boarding_date_time ve sam_seq_no ve trans flag ve tap_id(dolu olmayabilir)
-
+    cur = db_writer.conn.cursor()
+    cur.execute("select user, sys_context('USERENV','CON_NAME') from dual")
+    print("LOGIN:", cur.fetchone())
+    cur.execute("select table_name from user_tables where table_name='DETECTED_ANOMALIES'")
+    print("USER_TABLES:", cur.fetchall())
+    cur.execute("select owner, table_name from all_tables where table_name='DETECTED_ANOMALIES'")
+    print("ALL_TABLES:", cur.fetchall())
+    cur.close()
 
     consumer = KafkaConsumer(
         topic,
@@ -45,7 +47,7 @@ def main():
         value_deserializer=lambda x: json.loads(x.decode('utf-8'))
     )
 
-    model = ImprovedOnlineFarePredictor(error_threshold=threshold)
+    model = AmountPredictor(error_threshold=threshold)
 
     print("✅ Enhanced model initialized. Starting detection...\n")
     print(f"🔧 Config: threshold={threshold}, check_performance={check_performance}")
@@ -81,6 +83,15 @@ def main():
                 if anomaly:
                     model.stats['anomaly_count'] += 1
 
+                    if error >= threshold_used * 10:
+                        state = "critical"
+                    elif error >= threshold_used * 5:
+                        state = "major"
+                    else:
+                        state = "minor"
+
+                    db_writer.insert_anomaly(cleaned_data, offset, state)
+
                 status = "🚨 [ANOMALY]" if anomaly else "✅ [NORMAL] "
                 customer_info = f"({customer_cnt} person)" if customer_cnt > 1 else ""
                 print(f"{status} Offset={offset} | Route={route_code} | Flag={customer_flag} | "
@@ -92,14 +103,13 @@ def main():
 
         except ValueError as e:
             model.stats['validation_errors'] += 1
+            db_writer.insert_anomaly(raw_data, msg.offset, "invalid")
             print(f"❌ [VALIDATION ERROR] Offset={msg.offset} | Error: {e}")
             continue
 
         except Exception as e:
             print(f"💥 [SYSTEM ERROR] Offset={msg.offset} | Error: {e}")
             continue
-
-
 
 if __name__ == "__main__":
     main()

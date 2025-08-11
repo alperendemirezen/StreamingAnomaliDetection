@@ -4,9 +4,9 @@ from datetime import datetime
 import logging
 
 
-class ImprovedOnlineFarePredictor:
+class AmountPredictor:
     def __init__(self, error_threshold=0.01):
-        self.model = linear_model.LinearRegression(optimizer=optim.SGD(0.005))  # optimizer=optim.SGD(0.01)
+        self.model = linear_model.LinearRegression(optimizer=optim.SGD(0.005))
         self.threshold = error_threshold
 
         self.metrics = {

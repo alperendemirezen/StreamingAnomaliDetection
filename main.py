@@ -1,5 +1,6 @@
 import json
 import oracledb
+import logging
 
 from kafka import KafkaConsumer
 from config_loader import load_config
@@ -7,109 +8,145 @@ from db_writer import OracleAnomalyWriter
 from model import AmountPredictor
 
 
+def setup_logging(log_level="INFO", log_file="app.log"):
+
+    level = getattr(logging, log_level.upper(), logging.INFO)
+
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ]
+    )
+
+    logging.getLogger("kafka").setLevel(logging.WARNING)
+    logging.getLogger("kafka.consumer.fetcher").setLevel(logging.ERROR)
+    logging.getLogger("oracledb").setLevel(logging.WARNING)
 
 
 def main():
 
-    cfg = load_config("config.ini")
-    topic = cfg["kafka"]["topic"]
-    bootstrap_servers = cfg["kafka"]["bootstrap_servers"]
-    group_id = cfg["kafka"]["group_id"]
-    threshold = float(cfg["app"]["error_threshold"])
-    check_performance = int(cfg["app"]["check_performance"])
-    warmup_count = int(cfg["app"]["warmup_count"])
 
-    user = cfg["database"]["user"]
-    password = cfg["database"]["password"]
-    host = cfg["database"]["host"]
-    port = cfg["database"]["port"]
-    service = cfg["database"]["service"]
+    try:
+        cfg = load_config("config.ini")
 
-    dsn = f"{host}:{port}/{service}"
+        log_level = cfg["logging"]["level"]
+        log_file = cfg["logging"]["file"]
 
-    db_writer = OracleAnomalyWriter(user, password, dsn)
+        setup_logging(log_level,log_file)
+        logger = logging.getLogger(__name__)
 
-    cur = db_writer.conn.cursor()
-    cur.execute("select user, sys_context('USERENV','CON_NAME') from dual")
-    print("LOGIN:", cur.fetchone())
-    cur.execute("select table_name from user_tables where table_name='DETECTED_ANOMALIES'")
-    print("USER_TABLES:", cur.fetchall())
-    cur.execute("select owner, table_name from all_tables where table_name='DETECTED_ANOMALIES'")
-    print("ALL_TABLES:", cur.fetchall())
-    cur.close()
+        logger.info("Starting anomaly detection system...")
 
-    consumer = KafkaConsumer(
-        topic,
-        bootstrap_servers=bootstrap_servers,
-        group_id=group_id,
-        auto_offset_reset='earliest',
-        enable_auto_commit=False,
-        value_deserializer=lambda x: json.loads(x.decode('utf-8'))
-    )
+        topic = cfg["kafka"]["topic"]
+        bootstrap_servers = cfg["kafka"]["bootstrap_servers"]
+        group_id = cfg["kafka"]["group_id"]
+        timeout = int(cfg["kafka"]["timeout"])
 
-    model = AmountPredictor(error_threshold=threshold)
+        threshold = float(cfg["app"]["error_threshold"])
+        check_performance = int(cfg["app"]["check_performance"])
+        warmup_count = int(cfg["app"]["warmup_count"])
 
-    print("✅ Enhanced model initialized. Starting detection...\n")
-    print(f"🔧 Config: threshold={threshold}, check_performance={check_performance}")
+        user = cfg["database"]["user"]
+        password = cfg["database"]["password"]
+        host = cfg["database"]["host"]
+        port = cfg["database"]["port"]
+        service = cfg["database"]["service"]
 
-    for msg in consumer:
-        try:
-            raw_data = msg.value
-            cleaned_data = model.validate_data(raw_data)
+        dsn = f"{host}:{port}/{service}"
 
-            route_code = cleaned_data['route_code']
-            customer_flag = cleaned_data['customer_flag']
-            tariff_number = cleaned_data['tariff_number']
-            rider = cleaned_data['rider']
-            customer_cnt = cleaned_data['customer_cnt']
-            total_amount = cleaned_data['amount']
-            usage_amt = cleaned_data['usage_amount']
+        logger.info(f"Configuration loaded - Topic: {topic}, Threshold: {threshold}, Warmup: {warmup_count}")
 
+        db_writer = OracleAnomalyWriter(user, password, dsn)
 
-            combo = f"{route_code}_{customer_flag}_{tariff_number}_{rider}"
-            x = {f"combo_{combo}": 1}
-            offset = msg.offset
+        consumer = KafkaConsumer(
+            topic,
+            bootstrap_servers=bootstrap_servers,
+            group_id=group_id,
+            auto_offset_reset='earliest',
+            enable_auto_commit=False,
+            value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+            request_timeout_ms=timeout,
+        )
 
-            model.stats['total_processed'] += 1
+        logger.info(f"Kafka consumer initialized for topic: {topic}")
 
-            if model.stats['total_processed'] <= warmup_count:
-                model.learn_one(x, usage_amt)
-                print(
-                    f"🔥 [WARMUP] Offset={offset} | Combo={combo} | Amount={total_amount:.2f} | Per Person={usage_amt:.2f}")
-            else:
-                anomaly, error, y_pred, threshold_used = model.is_anomaly(x, usage_amt)
-                model.learn_one(x, usage_amt)
+        model = AmountPredictor(error_threshold=threshold)
 
-                if anomaly:
-                    model.stats['anomaly_count'] += 1
+        logger.info("Grafana API started on http://localhost:5000")
+        logger.info("Enhanced model initialized. Starting detection...")
+        logger.info(f"Config: threshold={threshold}, check_performance={check_performance}")
 
-                    if error >= threshold_used * 10:
-                        state = "critical"
-                    elif error >= threshold_used * 5:
-                        state = "major"
-                    else:
-                        state = "minor"
+        for msg in consumer:
+            try:
+                raw_data = msg.value
+                cleaned_data = model.validate_data(raw_data)
 
-                    db_writer.insert_anomaly(cleaned_data, offset, state)
+                route_code = cleaned_data['route_code']
+                customer_flag = cleaned_data['customer_flag']
+                tariff_number = cleaned_data['tariff_number']
+                rider = cleaned_data['rider']
+                customer_cnt = cleaned_data['customer_cnt']
+                total_amount = cleaned_data['amount']
+                usage_amt = cleaned_data['usage_amount']
 
-                status = "🚨 [ANOMALY]" if anomaly else "✅ [NORMAL] "
-                customer_info = f"({customer_cnt} person)" if customer_cnt > 1 else ""
-                print(f"{status} Offset={offset} | Route={route_code} | Flag={customer_flag} | "
-                      f"Tariff={tariff_number} | Rider={rider} | Total={total_amount:.2f} | "
-                      f"Per Person={usage_amt:.2f} {customer_info} | "
-                      f"Predicted={y_pred:.2f} | Error={error:.2f} | Threshold={threshold_used:.2f}")
+                combo = f"{route_code}_{customer_flag}_{tariff_number}_{rider}"
+                x = {f"combo_{combo}": 1}
+                offset = msg.offset
 
-            model.log_performance(check_performance)
+                model.stats['total_processed'] += 1
 
-        except ValueError as e:
-            model.stats['validation_errors'] += 1
-            db_writer.insert_anomaly(raw_data, msg.offset, "invalid")
-            print(f"❌ [VALIDATION ERROR] Offset={msg.offset} | Error: {e}")
-            continue
+                if model.stats['total_processed'] <= warmup_count:
+                    model.learn_one(x, usage_amt)
+                    logger.info(
+                        f"[WARMUP] Offset={offset} | Combo={combo} | Amount={total_amount:.2f} | Per Person={usage_amt:.2f}")
+                else:
+                    anomaly, error, y_pred, threshold_used = model.is_anomaly(x, usage_amt)
+                    model.learn_one(x, usage_amt)
 
-        except Exception as e:
-            print(f"💥 [SYSTEM ERROR] Offset={msg.offset} | Error: {e}")
-            continue
+                    if anomaly:
+                        model.stats['anomaly_count'] += 1
+
+                        if error >= threshold_used * 10:
+                            state = "critical"
+                        elif error >= threshold_used * 5:
+                            state = "major"
+                        else:
+                            state = "minor"
+
+                            db_writer.insert_anomaly(cleaned_data, msg.offset, state)
+
+                        logger.warning(
+                            f"[ANOMALY-{state.upper()}] Offset={offset} | Route={route_code} | Flag={customer_flag} | "
+                            f"Tariff={tariff_number} | Rider={rider} | Total={total_amount:.2f} | "
+                            f"Per Person={usage_amt:.2f} | Predicted={y_pred:.2f} | Error={error:.2f}")
+
+                    customer_info = f"({customer_cnt} person)" if customer_cnt > 1 else ""
+
+                    if not anomaly:
+                        logger.debug(f"[NORMAL] Offset={offset} | Route={route_code} | Flag={customer_flag} | "
+                                     f"Tariff={tariff_number} | Rider={rider} | Total={total_amount:.2f} | "
+                                     f"Per Person={usage_amt:.2f} {customer_info} | "
+                                     f"Predicted={y_pred:.2f} | Error={error:.2f}")
+
+                model.log_performance(check_performance)
+
+            except ValueError as e:
+                model.stats['validation_errors'] += 1
+                db_writer.insert_anomaly(raw_data, msg.offset, "invalid")
+                logger.error(f"[VALIDATION ERROR] Offset={msg.offset} | Error: {e}")
+                continue
+
+            except Exception as e:
+                logger.critical(f"[SYSTEM ERROR] Offset={msg.offset} | Error: {e}", exc_info=True)
+                continue
+
+    except Exception as e:
+        logger.critical(f"Critical error in main function: {e}", exc_info=True)
+        raise
+
 
 if __name__ == "__main__":
     main()

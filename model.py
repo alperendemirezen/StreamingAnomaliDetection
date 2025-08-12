@@ -1,5 +1,4 @@
 from river import linear_model, metrics, optim
-import json
 from datetime import datetime
 import logging
 

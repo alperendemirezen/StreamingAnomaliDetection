@@ -1,9 +1,18 @@
 import oracledb
+import logging
+
 
 class OracleAnomalyWriter:
     def __init__(self, user, password, dsn):
-        self.conn = oracledb.connect(user=user, password=password, dsn=dsn)
-        self.cursor = self.conn.cursor()
+        self.logger = logging.getLogger(__name__)
+
+        try:
+            self.conn = oracledb.connect(user=user, password=password, dsn=dsn)
+            self.cursor = self.conn.cursor()
+            self.logger.info(f"Oracle database connection established successfully to {dsn}")
+        except oracledb.DatabaseError as e:
+            self.logger.error(f"Failed to connect to Oracle database: {e}")
+            raise
 
     def insert_anomaly(self, data: dict, msg_offset: int, state: str):
         try:
@@ -30,10 +39,11 @@ class OracleAnomalyWriter:
             }
             self.cursor.execute(sql, params)
             self.conn.commit()
+            self.logger.debug(
+                f"Anomaly inserted successfully: offset={msg_offset}, state={state}, route={data.get('route_code')}")
 
         except oracledb.DatabaseError as e:
-            print(f"DB insert error: {e}")
+            self.logger.error(f"Database insert error for offset {msg_offset}: {e}")
             self.conn.rollback()
-    def close(self):
-        self.cursor.close()
-        self.conn.close()
+            raise
+

@@ -79,17 +79,23 @@ def main():
         for msg in consumer:
             try:
                 raw_data = msg.value
+
+                if not (raw_data['type'] == 'T') or not (raw_data['record_id'] == 'D'):
+                    logger.debug(f"Skipping non-transaction record: Offset:{msg.offset}")
+                    continue
+
                 cleaned_data = model.validate_data(raw_data)
 
                 route_code = cleaned_data['route_code']
                 customer_flag = cleaned_data['customer_flag']
                 tariff_number = cleaned_data['tariff_number']
                 rider = cleaned_data['rider']
+                transmit_cnt = cleaned_data.get('transmit_cnt')
                 customer_cnt = cleaned_data['customer_cnt']
                 total_amount = cleaned_data['amount']
                 usage_amt = cleaned_data['usage_amount']
 
-                combo = f"{route_code}_{customer_flag}_{tariff_number}_{rider}"
+                combo = f"{route_code}_{customer_flag}_{tariff_number}_{rider}_{transmit_cnt}"
                 x = {f"combo_{combo}": 1}
                 offset = msg.offset
 
@@ -98,7 +104,7 @@ def main():
                 if model.stats['total_processed'] <= warmup_count:
                     model.learn_one(x, usage_amt)
                     logger.info(
-                        f"[WARMUP] Offset={offset} | Combo={combo} | Amount={total_amount:.2f} | Per Person={usage_amt:.2f}")
+                        f"[WARMUP] Offset={offset} | Combo={combo} | Amount={total_amount:.2f} | Per Person={usage_amt:.2f} | Processed={model.stats['total_processed']}")
                 else:
                     anomaly, error, y_pred, threshold_used = model.is_anomaly(x, usage_amt)
                     model.learn_one(x, usage_amt)
@@ -117,14 +123,14 @@ def main():
 
                         logger.warning(
                             f"[ANOMALY-{state.upper()}] Offset={offset} | Route={route_code} | Flag={customer_flag} | "
-                            f"Tariff={tariff_number} | Rider={rider} | Total={total_amount:.2f} | "
+                            f"Tariff={tariff_number} | Rider={rider} | Transmit={transmit_cnt} | Total={total_amount:.2f} | "
                             f"Per Person={usage_amt:.2f} | Predicted={y_pred:.2f} | Error={error:.2f}")
 
                     customer_info = f"({customer_cnt} person)" if customer_cnt > 1 else ""
 
                     if not anomaly:
                         logger.debug(f"[NORMAL] Offset={offset} | Route={route_code} | Flag={customer_flag} | "
-                                     f"Tariff={tariff_number} | Rider={rider} | Total={total_amount:.2f} | "
+                                     f"Tariff={tariff_number} | Rider={rider} | Transmit={transmit_cnt} | Total={total_amount:.2f} | "
                                      f"Per Person={usage_amt:.2f} {customer_info} | "
                                      f"Predicted={y_pred:.2f} | Error={error:.2f}")
 

@@ -80,9 +80,6 @@ class AmountPredictor:
         if usage_amount < 0:
             raise ValueError(f"Usage amount cannot be negative: {usage_amount}")
 
-        if usage_amount > 1000:
-            raise ValueError(f"Usage amount too high (>1000 TL per person): {usage_amount}")
-
         route_code = str(data['route_code']).strip()
         if not route_code or route_code == '':
             raise ValueError("route_code cannot be empty")

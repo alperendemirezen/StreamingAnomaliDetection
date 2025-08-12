@@ -24,6 +24,7 @@ class AmountPredictor:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
+
     def validate_data(self, data):
         validation_errors = []
 

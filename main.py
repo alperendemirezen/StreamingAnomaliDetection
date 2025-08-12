@@ -95,6 +95,8 @@ def main():
                 total_amount = cleaned_data['amount']
                 usage_amt = cleaned_data['usage_amount']
 
+                #OK NOW
+
                 combo = f"{route_code}_{customer_flag}_{tariff_number}_{rider}_{transmit_cnt}"
                 x = {f"combo_{combo}": 1}
                 offset = msg.offset

@@ -1,5 +1,4 @@
 import json
-import oracledb
 import logging
 
 from kafka import KafkaConsumer
@@ -25,9 +24,7 @@ def setup_logging(log_level="INFO", log_file="app.log"):
     logging.getLogger("kafka.consumer.fetcher").setLevel(logging.ERROR)
     logging.getLogger("oracledb").setLevel(logging.WARNING)
 
-
 def main():
-
 
     try:
         cfg = load_config("config.ini")
@@ -146,7 +143,6 @@ def main():
     except Exception as e:
         logger.critical(f"Critical error in main function: {e}", exc_info=True)
         raise
-
 
 if __name__ == "__main__":
     main()

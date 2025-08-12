@@ -79,6 +79,11 @@ def main():
         for msg in consumer:
             try:
                 raw_data = msg.value
+
+                if not raw_data['type'] == 'T' or not raw_data['record_id'] == 'D' :
+                    logger.debug(f"Skipping non-transaction record: {raw_data}")
+                    continue
+
                 cleaned_data = model.validate_data(raw_data)
 
                 route_code = cleaned_data['route_code']

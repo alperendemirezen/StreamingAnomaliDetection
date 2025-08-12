@@ -27,7 +27,7 @@ class AmountPredictor:
     def validate_data(self, data):
         validation_errors = []
 
-        required_fields = ['route_code', 'customer_flag', 'amount']
+        required_fields = ['route_code', 'customer_flag', 'usage_amt']
         for field in required_fields:
             if field not in data:
                 validation_errors.append(f"Missing required field: {field}")
@@ -48,10 +48,10 @@ class AmountPredictor:
             self.logger.debug("tariff_number field was null, set to '0'")
 
         try:
-            amount = float(str(data['amount']).lstrip("0") or 0)
+            amount = float(str(data['usage_amt']).lstrip("0") or 0)
             cleaned_data['amount'] = amount
         except (ValueError, TypeError):
-            raise ValueError(f"Invalid amount format: {data['amount']}")
+            raise ValueError(f"Invalid amount format: {data['usage_amt']}")
 
         customer_cnt = 1
         if 'customer_cnt' in data and data['customer_cnt'] is not None:

@@ -1,23 +1,19 @@
-# --- Python derleme/önbellek ---
 __pycache__/
 *.py[cod]
 *.pyd
 *.pyo
 
-# --- Sanal ortamlar ---
 .venv/
 venv/
 ENV/
 env/
 
-# --- Paketleme/derleme çıktıları ---
 build/
 dist/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
 
-# --- Test/araç önbellekleri ---
 .pytest_cache/
 .mypy_cache/
 .tox/
@@ -25,26 +21,21 @@ pip-wheel-metadata/
 .coverage.*
 htmlcov/
 
-# --- IDE / Editör ---
 .idea/
 .vscode/
 *.code-workspace
 
-# --- Loglar ve geçici dosyalar ---
 *.log
 logs/
 tmp/
 *.tmp
 
-# --- OS çöp dosyaları ---
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# --- Notebooks ---
 .ipynb_checkpoints/
 
-# --- Konfig/secret (örnek dosya commit'le) ---
 config.ini
 .env
 *.env
@@ -52,3 +43,6 @@ config.ini
 wallet/
 *.pem
 *.p12
+
+
+*.pkl

@@ -1,3 +1,6 @@
+import os
+import pickle
+
 from river import linear_model, metrics, optim
 from datetime import datetime
 import logging
@@ -161,7 +164,7 @@ class AmountPredictor:
             report = self.get_performance_report()
 
             self.logger.info("=" * 50)
-            self.logger.info("📊 PERFORMANCE REPORT")
+            self.logger.info("[PERFORMANCE REPORT]")
             self.logger.info(f"MAE: {report['performance_metrics']['mae']:.4f} TL")
             self.logger.info(f"RMSE: {report['performance_metrics']['rmse']:.4f} TL")
             self.logger.info(f"R²: {report['performance_metrics']['r2']:.4f}")
@@ -175,3 +178,28 @@ class AmountPredictor:
                     self.logger.warning(f"  - {issue}")
 
             self.logger.info("=" * 50)
+
+    def save_model(self, file_path="amount_predictor.pkl"):
+        snapshot = {
+            "model": self.model,
+            "metrics": self.metrics,
+            "stats": self.stats
+        }
+        with open(file_path, "wb") as f:
+            pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
+        self.logger.info(f"Model + metrics + stats saved to {file_path}")
+
+    def load_model(self, file_path="amount_predictor.pkl"):
+        if os.path.exists(file_path):
+            with open(file_path, "rb") as f:
+                snapshot = pickle.load(f)
+
+            self.model = snapshot.get("model", self.model)
+            self.metrics = snapshot.get("metrics", self.metrics)
+            self.stats = snapshot.get("stats", self.stats)
+
+            self.logger.info(f"Model + metrics + stats loaded from {file_path}")
+            return True
+        else:
+            self.logger.warning(f"No saved model found at {file_path}, starting fresh.")
+            return False

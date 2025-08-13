@@ -45,6 +45,7 @@ def main():
         threshold = float(cfg["app"]["error_threshold"])
         check_performance = int(cfg["app"]["check_performance"])
         warmup_count = int(cfg["app"]["warmup_count"])
+        save_model = int(cfg["app"]["save_model"])
 
         user = cfg["database"]["user"]
         password = cfg["database"]["password"]
@@ -71,6 +72,8 @@ def main():
         logger.info(f"Kafka consumer initialized for topic: {topic}")
 
         model = AmountPredictor(error_threshold=threshold)
+        if model.load_model("amount_predictor.pkl"):
+            warmup_count = 0
 
         logger.info("Grafana API started on http://localhost:5000")
         logger.info("Enhanced model initialized. Starting detection...")
@@ -103,10 +106,15 @@ def main():
 
                 model.stats['total_processed'] += 1
 
+                if model.stats['total_processed'] % save_model == 0:
+                    model.save_model("amount_predictor.pkl")
+
                 if model.stats['total_processed'] <= warmup_count:
                     model.learn_one(x, usage_amt)
                     logger.info(
-                        f"[WARMUP] Offset={offset} | Combo={combo} | Amount={total_amount:.2f} | Per Person={usage_amt:.2f} | Processed={model.stats['total_processed']}")
+                        f"[WARMUP] Offset={offset} | Route={route_code} | Flag={customer_flag} | "
+                            f"Tariff={tariff_number} | Rider={rider} | Transmit={transmit_cnt} | Total={total_amount:.2f} | "
+                            f"Per Person={usage_amt:.2f} | Processed={model.stats['total_processed']}")
                 else:
                     anomaly, error, y_pred, threshold_used = model.is_anomaly(x, usage_amt)
                     model.learn_one(x, usage_amt)
@@ -126,7 +134,7 @@ def main():
                         logger.warning(
                             f"[ANOMALY-{state.upper()}] Offset={offset} | Route={route_code} | Flag={customer_flag} | "
                             f"Tariff={tariff_number} | Rider={rider} | Transmit={transmit_cnt} | Total={total_amount:.2f} | "
-                            f"Per Person={usage_amt:.2f} | Predicted={y_pred:.2f} | Error={error:.2f}")
+                            f"Per Person={usage_amt:.2f} | Predicted={y_pred:.2f} | Error={error:.2f} | Processed={model.stats['total_processed']}")
 
                     customer_info = f"({customer_cnt} person)" if customer_cnt > 1 else ""
 
@@ -134,7 +142,7 @@ def main():
                         logger.debug(f"[NORMAL] Offset={offset} | Route={route_code} | Flag={customer_flag} | "
                                      f"Tariff={tariff_number} | Rider={rider} | Transmit={transmit_cnt} | Total={total_amount:.2f} | "
                                      f"Per Person={usage_amt:.2f} {customer_info} | "
-                                     f"Predicted={y_pred:.2f} | Error={error:.2f}")
+                                     f"Predicted={y_pred:.2f} | Error={error:.2f} | Processed={model.stats['total_processed']}")
 
                 model.log_performance(check_performance)
 

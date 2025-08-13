@@ -1,14 +1,23 @@
 import os
 import pickle
 
-from river import linear_model, metrics, optim
+from river import linear_model, metrics, optim, tree
 from datetime import datetime
 import logging
 
 
 class AmountPredictor:
     def __init__(self, error_threshold=0.01):
-        self.model = linear_model.LinearRegression(optimizer=optim.SGD(0.005))
+        self.model = tree.HoeffdingTreeRegressor(
+            grace_period=20,
+            delta=0.01,
+            tau=0.05,
+            leaf_prediction = 'model',
+            leaf_model=linear_model.LinearRegression(
+                optimizer=optim.SGD(0.1)
+            )
+        )
+
         self.threshold = error_threshold
 
         self.metrics = {
@@ -111,7 +120,7 @@ class AmountPredictor:
         y_pred = self.predict_one(x)
         error = abs(y - y_pred)
 
-        dynamic_threshold = max(self.threshold, y_pred * 0.01) if y_pred > 0 else self.threshold
+        dynamic_threshold = y_pred * self.threshold
 
         return error > dynamic_threshold, error, y_pred, dynamic_threshold
 

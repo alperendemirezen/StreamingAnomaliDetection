@@ -42,7 +42,7 @@ def main():
         group_id = cfg["kafka"]["group_id"]
         timeout = int(cfg["kafka"]["timeout"])
 
-        threshold = float(cfg["app"]["error_threshold"])
+        threshold = float(cfg["app"]["error_threshold_percentage"])
         check_performance = int(cfg["app"]["check_performance"])
         warmup_count = int(cfg["app"]["warmup_count"])
         save_model = int(cfg["app"]["save_model"])

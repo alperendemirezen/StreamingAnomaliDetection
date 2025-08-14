@@ -7,6 +7,10 @@ import oracledb
 from datetime import datetime, timedelta
 import time
 import numpy as np
+import json
+import os
+
+import config_loader
 
 # Sayfa konfigürasyonu
 st.set_page_config(
@@ -40,6 +44,165 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
+# Oracle bağlantısı için konfigürasyon
+@st.cache_resource
+def init_db_connection():
+    """Oracle veritabanı bağlantısı"""
+    try:
+        cfg = config_loader.load_config("config.ini")
+        host = cfg["database"]["host"]
+        port = cfg["database"]["port"]
+        service = cfg["database"]["service"]
+        dsn = f"{host}:{port}/{service}"
+
+        connection = oracledb.connect(
+            user=cfg["database"]["user"],
+            password=cfg["database"]["password"],
+            dsn=dsn,
+        )
+        return connection
+    except Exception as e:
+        st.error(f"Veritabanı bağlantı hatası: {e}")
+        return None
+
+
+# Model performans verilerini çek
+@st.cache_data(ttl=30)
+def get_model_performance():
+    """Model performansını pkl dosyasından veya loglardan oku"""
+    try:
+        # Model pkl dosyası varsa oku
+        if os.path.exists("amount_predictor.pkl"):
+            import pickle
+            with open("amount_predictor.pkl", "rb") as f:
+                snapshot = pickle.load(f)
+
+            stats = snapshot.get("stats", {})
+            metrics = snapshot.get("metrics", {})
+
+            return {
+                'mae': metrics.get('mae', {}).get() if hasattr(metrics.get('mae', {}), 'get') else 0,
+                'rmse': metrics.get('rmse', {}).get() if hasattr(metrics.get('rmse', {}), 'get') else 0,
+                'r2': metrics.get('r2', {}).get() if hasattr(metrics.get('r2', {}), 'get') else 0,
+                'total_processed': stats.get('total_processed', 0),
+                'anomaly_count': stats.get('anomaly_count', 0),
+                'validation_errors': stats.get('validation_errors', 0),
+                'system_health': 'GOOD'  # Bunu hesapla
+            }
+    except Exception as e:
+        st.warning(f"Model dosyası okunamadı: {e}")
+
+    # Default değerler
+    return {
+        'mae': 0.0, 'rmse': 0.0, 'r2': 0.0,
+        'total_processed': 0, 'anomaly_count': 0,
+        'validation_errors': 0, 'system_health': 'UNKNOWN'
+    }
+
+
+# Oracle'dan anomali verilerini çek
+@st.cache_data(ttl=30)
+def get_anomaly_data():
+    """Oracle'dan anomali verilerini çek"""
+    conn = init_db_connection()
+    if not conn:
+        return pd.DataFrame()
+
+    try:
+        # Anomali tablosundan veri çek
+        query = """
+        SELECT 
+            detection_time,
+            route_code,
+            customer_flag, 
+            tariff_number,
+            rider,
+            usage_amount,
+            predicted_amount,
+            error_amount,
+            error_percentage,
+            state,
+            offset_value
+        FROM anomalies 
+        WHERE detection_time >= SYSDATE - 1
+        ORDER BY detection_time DESC
+        """
+
+        df = pd.read_sql(query, conn)
+        df['detection_time'] = pd.to_datetime(df['detection_time'])
+        return df
+
+    except Exception as e:
+        st.error(f"Anomali verileri alınırken hata: {e}")
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
+
+# Zaman bazlı trend verileri
+@st.cache_data(ttl=30)
+def get_time_series_data():
+    """Saatlik anomali trendini çek"""
+    conn = init_db_connection()
+    if not conn:
+        return pd.DataFrame()
+
+    try:
+        query = """
+        SELECT 
+            DATE_TRUNC('hour', detection_time) as hour,
+            COUNT(*) as anomaly_count,
+            AVG(error_percentage) as avg_error_pct
+        FROM anomalies
+        WHERE detection_time >= SYSDATE - 1
+        GROUP BY DATE_TRUNC('hour', detection_time)
+        ORDER BY hour
+        """
+
+        df = pd.read_sql(query, conn)
+        df['hour'] = pd.to_datetime(df['hour'])
+        return df
+
+    except Exception as e:
+        st.error(f"Trend verileri alınırken hata: {e}")
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
+
+# Route bazlı istatistikler
+@st.cache_data(ttl=30)
+def get_route_stats():
+    """Route bazlı anomali istatistikleri"""
+    conn = init_db_connection()
+    if not conn:
+        return pd.DataFrame()
+
+    try:
+        query = """
+        SELECT 
+            route_code,
+            COUNT(*) as total_anomalies,
+            AVG(usage_amount) as avg_amount,
+            AVG(error_percentage) as avg_error_pct,
+            MAX(detection_time) as last_anomaly
+        FROM anomalies
+        WHERE detection_time >= SYSDATE - 7
+        GROUP BY route_code
+        ORDER BY total_anomalies DESC
+        """
+
+        df = pd.read_sql(query, conn)
+        return df
+
+    except Exception as e:
+        st.error(f"Route verileri alınırken hata: {e}")
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
+
 # Sidebar - Konfigürasyon
 st.sidebar.header("⚙️ Dashboard Ayarları")
 auto_refresh = st.sidebar.checkbox("🔄 Otomatik Yenileme", value=True)
@@ -47,105 +210,32 @@ refresh_interval = st.sidebar.slider("Yenileme Süresi (saniye)", 5, 60, 30)
 date_range = st.sidebar.date_input("📅 Tarih Aralığı",
                                    value=[datetime.now() - timedelta(days=1), datetime.now()])
 
-
-# Mock veri fonksiyonları (gerçekte Oracle'dan gelecek)
-@st.cache_data(ttl=30)  # 30 saniye cache
-def get_mock_performance_data():
-    """Model performans verileri"""
-    return {
-        'mae': 0.125,
-        'rmse': 0.234,
-        'r2': 0.876,
-        'total_processed': 15847,
-        'anomaly_count': 234,
-        'validation_errors': 12,
-        'system_health': 'GOOD'
-    }
-
-
-@st.cache_data(ttl=30)
-def get_mock_time_series():
-    """Zaman bazlı anomali verileri"""
-    dates = pd.date_range(start=datetime.now() - timedelta(hours=24),
-                          end=datetime.now(), freq='1H')
-    np.random.seed(42)
-    anomaly_counts = np.random.poisson(8, len(dates))  # Poisson dağılımı
-    processing_counts = np.random.normal(500, 50, len(dates))  # Normal dağılım
-
-    return pd.DataFrame({
-        'time': dates,
-        'anomaly_count': anomaly_counts,
-        'processing_count': processing_counts.astype(int),
-        'anomaly_rate': (anomaly_counts / processing_counts.astype(int) * 100).round(2)
-    })
-
-
-@st.cache_data(ttl=30)
-def get_mock_route_data():
-    """Route bazlı veriler"""
-    routes = ['M1_Metro', 'Bus_34C', 'Bus_500T', 'M2_Metro', 'Bus_15F',
-              'Metrobus_34', 'Bus_28', 'M3_Metro', 'Bus_110', 'Ferry_1']
-    np.random.seed(123)
-    return pd.DataFrame({
-        'route_code': routes,
-        'total_transactions': np.random.randint(1000, 5000, len(routes)),
-        'anomaly_count': np.random.randint(10, 100, len(routes)),
-        'avg_amount': np.random.uniform(2.5, 15.0, len(routes)).round(2)
-    })
-
-
-@st.cache_data(ttl=30)
-def get_mock_recent_anomalies():
-    """Son anomaliler"""
-    np.random.seed(456)
-    routes = ['M1_Metro', 'Bus_34C', 'Bus_500T', 'M2_Metro', 'Bus_15F']
-    states = ['critical', 'major', 'minor']
-
-    data = []
-    for i in range(20):
-        data.append({
-            'time': datetime.now() - timedelta(minutes=i * 15),
-            'route_code': np.random.choice(routes),
-            'customer_flag': np.random.choice(['student', 'adult', 'senior']),
-            'usage_amount': round(np.random.uniform(15, 50), 2),
-            'predicted_amount': round(np.random.uniform(2, 8), 2),
-            'error': round(np.random.uniform(10, 45), 2),
-            'state': np.random.choice(states, p=[0.2, 0.3, 0.5])
-        })
-
-    return pd.DataFrame(data)
-
-
 # Ana başlık
 st.markdown('<h1 class="main-header">🚌 Transit Anomaly Detection Dashboard</h1>',
             unsafe_allow_html=True)
 
-# Performans verileri
-perf_data = get_mock_performance_data()
-anomaly_rate = (perf_data['anomaly_count'] / perf_data['total_processed'] * 100)
+# Model performans verileri
+perf_data = get_model_performance()
+anomaly_rate = (perf_data['anomaly_count'] / max(perf_data['total_processed'], 1) * 100)
 
 # KPI Kartları
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     st.metric("📊 Toplam İşlem",
-              f"{perf_data['total_processed']:,}",
-              delta="1,234 (son saat)")
+              f"{perf_data['total_processed']:,}")
 
 with col2:
     st.metric("🚨 Anomali Sayısı",
-              f"{perf_data['anomaly_count']:,}",
-              delta="23 (son saat)")
+              f"{perf_data['anomaly_count']:,}")
 
 with col3:
     st.metric("📈 Anomali Oranı",
-              f"{anomaly_rate:.2f}%",
-              delta="-0.15%")
+              f"{anomaly_rate:.2f}%")
 
 with col4:
-    system_color = "normal" if perf_data['system_health'] == 'GOOD' else "inverse"
-    st.metric("💚 Sistem Sağlığı",
-              perf_data['system_health'])
+    health_color = "normal" if perf_data['system_health'] == 'GOOD' else "inverse"
+    st.metric("💚 Sistem Sağlığı", perf_data['system_health'])
 
 # Ana grafikler
 st.markdown("---")
@@ -156,55 +246,34 @@ col_left, col_right = st.columns([2, 1])
 with col_left:
     st.subheader("📈 Anomali Trendi (Son 24 Saat)")
 
-    # Time series verisi
-    ts_data = get_mock_time_series()
+    ts_data = get_time_series_data()
 
-    # Plotly ile dual-axis grafik
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-    # Anomali sayısı
-    fig.add_trace(
-        go.Scatter(x=ts_data['time'], y=ts_data['anomaly_count'],
-                   name="Anomali Sayısı",
-                   line=dict(color='#ff6b6b', width=3),
-                   fill='tonexty'),
-        secondary_y=False,
-    )
-
-    # İşlem sayısı
-    fig.add_trace(
-        go.Scatter(x=ts_data['time'], y=ts_data['processing_count'],
-                   name="İşlem Sayısı",
-                   line=dict(color='#4ecdc4', width=2),
-                   opacity=0.7),
-        secondary_y=True,
-    )
-
-    fig.update_xaxes(title_text="Zaman")
-    fig.update_yaxes(title_text="Anomali Sayısı", secondary_y=False)
-    fig.update_yaxes(title_text="İşlem Sayısı", secondary_y=True)
-    fig.update_layout(height=400, hovermode='x unified')
-
-    st.plotly_chart(fig, use_container_width=True)
+    if not ts_data.empty:
+        fig = px.line(ts_data, x='hour', y='anomaly_count',
+                      title="Saatlik Anomali Sayısı",
+                      markers=True)
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Henüz trend verisi bulunmuyor.")
 
 with col_right:
     st.subheader("🎯 Model Performansı")
 
-    # Gauge chart
+    # R² Score gauge
+    r2_score = perf_data['r2'] * 100 if perf_data['r2'] > 0 else 0
+
     fig_gauge = go.Figure(go.Indicator(
-        mode="gauge+number+delta",
-        value=perf_data['r2'] * 100,
+        mode="gauge+number",
+        value=r2_score,
         domain={'x': [0, 1], 'y': [0, 1]},
         title={'text': "R² Score (%)"},
-        delta={'reference': 85},
         gauge={'axis': {'range': [None, 100]},
                'bar': {'color': "darkblue"},
                'steps': [
                    {'range': [0, 50], 'color': "lightgray"},
                    {'range': [50, 80], 'color': "yellow"},
-                   {'range': [80, 100], 'color': "green"}],
-               'threshold': {'line': {'color': "red", 'width': 4},
-                             'thickness': 0.75, 'value': 90}}))
+                   {'range': [80, 100], 'color': "green"}]}))
     fig_gauge.update_layout(height=300)
     st.plotly_chart(fig_gauge, use_container_width=True)
 
@@ -216,52 +285,59 @@ with col_right:
 st.markdown("---")
 st.subheader("🗺️ Route Bazlı Analiz")
 
-route_data = get_mock_route_data()
-route_data['anomaly_rate'] = (route_data['anomaly_count'] / route_data['total_transactions'] * 100).round(2)
+route_data = get_route_stats()
 
-col1, col2 = st.columns(2)
+if not route_data.empty:
+    col1, col2 = st.columns(2)
 
-with col1:
-    # Bar chart - En problematik route'lar
-    fig_routes = px.bar(route_data.nlargest(8, 'anomaly_count'),
-                        x='route_code', y='anomaly_count',
-                        title="En Çok Anomali Olan Route'lar",
-                        color='anomaly_rate',
-                        color_continuous_scale='Reds')
-    fig_routes.update_layout(height=400)
-    st.plotly_chart(fig_routes, use_container_width=True)
+    with col1:
+        # En problematik route'lar
+        fig_routes = px.bar(route_data.head(10),
+                            x='route_code', y='total_anomalies',
+                            title="En Çok Anomali Olan Route'lar",
+                            color='avg_error_pct',
+                            color_continuous_scale='Reds')
+        fig_routes.update_layout(height=400)
+        st.plotly_chart(fig_routes, use_container_width=True)
 
-with col2:
-    # Scatter plot - Anomali oranı vs işlem sayısı
-    fig_scatter = px.scatter(route_data,
-                             x='total_transactions', y='anomaly_rate',
-                             size='anomaly_count', color='avg_amount',
-                             hover_name='route_code',
-                             title="İşlem Sayısı vs Anomali Oranı")
-    fig_scatter.update_layout(height=400)
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    with col2:
+        # Error yüzdesi dağılımı
+        fig_scatter = px.scatter(route_data,
+                                 x='total_anomalies', y='avg_error_pct',
+                                 size='avg_amount',
+                                 hover_name='route_code',
+                                 title="Anomali Sayısı vs Ortalama Error %")
+        fig_scatter.update_layout(height=400)
+        st.plotly_chart(fig_scatter, use_container_width=True)
+else:
+    st.info("Route analizi için henüz yeterli veri bulunmuyor.")
 
 # Son anomaliler tablosu
 st.markdown("---")
 st.subheader("🚨 Son Tespit Edilen Anomaliler")
 
-recent_anomalies = get_mock_recent_anomalies()
+recent_anomalies = get_anomaly_data()
+
+if not recent_anomalies.empty:
+    # State'e göre renklendirme fonksiyonu
+    def highlight_state(row):
+        if row['state'] == 'critical':
+            return ['background-color: #ffebee'] * len(row)
+        elif row['state'] == 'major':
+            return ['background-color: #fff3e0'] * len(row)
+        elif row['state'] == 'minor':
+            return ['background-color: #f3e5f5'] * len(row)
+        return [''] * len(row)
 
 
-# State'e göre renklendirme
-def highlight_state(val):
-    colors = {
-        'critical': 'background-color: #ffebee; color: #c62828',
-        'major': 'background-color: #fff3e0; color: #ef6c00',
-        'minor': 'background-color: #f3e5f5; color: #7b1fa2'
-    }
-    return colors.get(val, '')
+    # Tabloyu formatla ve göster
+    display_columns = ['detection_time', 'route_code', 'customer_flag',
+                       'usage_amount', 'predicted_amount', 'error_percentage', 'state']
 
-
-# Tabloyu formatlama (uyarıyı gidermek için)
-styled_df = recent_anomalies.style.map(highlight_state, subset=['state'])
-
-st.dataframe(styled_df, use_container_width=True, height=400)
+    styled_df = recent_anomalies[display_columns].head(50).style.apply(highlight_state, axis=1)
+    st.dataframe(styled_df, use_container_width=True, height=400)
+else:
+    st.info("Son 24 saatte anomali tespit edilmemiş.")
 
 # Footer
 st.markdown("---")
@@ -277,7 +353,12 @@ with col2:
         st.warning("⚠️ Dikkat Gerekli")
 
 with col3:
-    st.metric("⚡ Uptime", "2d 14h 23m")
+    # Model dosyası yaşını hesapla
+    if os.path.exists("amount_predictor.pkl"):
+        model_age = datetime.now() - datetime.fromtimestamp(os.path.getmtime("amount_predictor.pkl"))
+        st.metric("⚡ Model Yaşı", f"{model_age.seconds // 3600}h {(model_age.seconds // 60) % 60}m")
+    else:
+        st.metric("⚡ Model", "Bulunamadı")
 
 # Otomatik yenileme
 if auto_refresh:

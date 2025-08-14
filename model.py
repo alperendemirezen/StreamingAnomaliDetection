@@ -7,14 +7,14 @@ import logging
 
 
 class AmountPredictor:
-    def __init__(self, error_threshold=0.01):
+    def __init__(self, error_threshold=0.01, learning_rate=0.01):
         self.model = tree.HoeffdingTreeRegressor(
             grace_period=20,
             delta=0.01,
             tau=0.05,
             leaf_prediction = 'model',
             leaf_model=linear_model.LinearRegression(
-                optimizer=optim.SGD(0.1)
+                optimizer=optim.SGD(learning_rate)
             )
         )
 
@@ -54,15 +54,18 @@ class AmountPredictor:
 
         if data.get('rider') is None:
             cleaned_data['rider'] = '0'
-            self.logger.debug("rider field was null, set to '0'")
 
         if data.get('tariff_number') is None:
-            cleaned_data['tariff_number'] = '0'
-            self.logger.debug("tariff_number field was null, set to '0'")
+            cleaned_data['tariff_number'] = 0
 
         if data.get('transmit_cnt') is None:
             cleaned_data['transmit_cnt'] = 0
-            self.logger.debug("transmit_cnt field was null, set to 0")
+
+        if data.get('stage') is None:
+            cleaned_data['stage'] = '0'
+
+        if data.get('vehicle_type') is None:
+            cleaned_data['vehicle_type'] = '0'
 
         try:
             amount = float(str(data['usage_amt']).lstrip("0") or 0)
@@ -76,18 +79,14 @@ class AmountPredictor:
                 customer_cnt = int(data['customer_cnt'])
                 if customer_cnt <= 0:
                     raise ValueError(f"customer_cnt must be > 0, got: {customer_cnt}")
-                self.logger.debug(f"customer_cnt found: {customer_cnt}")
             except (ValueError, TypeError):
                 raise ValueError(f"Invalid customer_cnt format: {data.get('customer_cnt')}")
-        else:
-            self.logger.debug("customer_cnt not provided, using default: 1")
 
         cleaned_data['customer_cnt'] = customer_cnt
 
         usage_amount = amount / customer_cnt
         cleaned_data['usage_amount'] = usage_amount
 
-        self.logger.debug(f"Amount calculation: {amount} ÷ {customer_cnt} = {usage_amount}")
 
         if usage_amount < 0:
             raise ValueError(f"Usage amount cannot be negative: {usage_amount}")
@@ -96,6 +95,11 @@ class AmountPredictor:
         if not route_code or route_code == '':
             raise ValueError("route_code cannot be empty")
         cleaned_data['route_code'] = route_code
+
+        old_route_code = str(data['old_route_code']).strip()
+        if not old_route_code or old_route_code == '':
+            raise ValueError("old_route_code cannot be empty")
+        cleaned_data['old_route_code'] = old_route_code
 
         customer_flag = str(data['customer_flag']).strip()
         if not customer_flag or customer_flag == '':
@@ -120,10 +124,14 @@ class AmountPredictor:
         y_pred = self.predict_one(x)
         error = abs(y - y_pred)
 
+        if y > 0:
+            error_percentage = (error / y) * 100
+        else:
+            error_percentage = 0 if error == 0 else float('inf')
+
         dynamic_threshold = y_pred * self.threshold
 
-        return error > dynamic_threshold, error, y_pred, dynamic_threshold
-
+        return error > dynamic_threshold, error, y_pred, dynamic_threshold, error_percentage
     def get_performance_report(self):
         anomaly_rate = (self.stats['anomaly_count'] / max(self.stats['total_processed'], 1)) * 100
 
@@ -182,7 +190,7 @@ class AmountPredictor:
             self.logger.info(f"System Health: {report['system_health']['status']}")
 
             if report['system_health']['issues']:
-                self.logger.warning("⚠️  Issues detected:")
+                self.logger.warning(" Issues detected:")
                 for issue in report['system_health']['issues']:
                     self.logger.warning(f"  - {issue}")
 

@@ -2,6 +2,8 @@ import json
 import logging
 
 from kafka import KafkaConsumer
+from river import optim
+
 from config_loader import load_config
 from db_writer import OracleAnomalyWriter
 from model import AmountPredictor
@@ -73,6 +75,10 @@ def main():
         logger.info(f"Kafka consumer initialized for topic: {topic}")
 
         model = AmountPredictor(error_threshold=threshold, learning_rate=learning_rate)
+        original_optimizer = model.model.optimizer
+
+        anomaly_learning_rate = learning_rate * 0.1
+        anomaly_optimizer = optim.SGD(anomaly_learning_rate)
         if model.load_model("amount_predictor.pkl"):
             warmup_count = 0
 
@@ -89,7 +95,7 @@ def main():
                 cleaned_data = model.validate_data(raw_data)
 
                 route_code = cleaned_data['route_code']
-                old_route_code = cleaned_data.get('old_route_code')
+                # old_route_code = cleaned_data.get('old_route_code')
                 customer_flag = cleaned_data['customer_flag']
                 tariff_number = cleaned_data['tariff_number']
                 rider = cleaned_data['rider']
@@ -102,10 +108,19 @@ def main():
                 total_amount = cleaned_data['amount']
                 usage_amt = cleaned_data['usage_amount']
 
+                features = {
+                    f"route_{route_code}": 1,
+                    f"customer_{customer_flag}": 1,
+                    f"tariff_{tariff_number}": 1,
+                    f"rider_{rider}": 1,
+                    f"transmit_{transmit_cnt}": 1,
 
+                    f"route_customer_{route_code}_{customer_flag}": 1,
+                    f"route_tariff_{route_code}_{tariff_number}": 1,
+                    f"customer_tariff_{customer_flag}_{tariff_number}": 1,
 
-                combo = f"{route_code}_{customer_flag}_{tariff_number}_{rider}_{transmit_cnt}_{old_route_code}"
-                x = {f"combo_{combo}": 1}
+                    f"full_combo_{route_code}_{customer_flag}_{tariff_number}_{rider}_{transmit_cnt}": 1 #{old_route_code}
+                }
                 offset = msg.offset
 
                 model.stats['total_processed'] += 1
@@ -114,19 +129,21 @@ def main():
                     model.save_model("amount_predictor.pkl")
 
                 if model.stats['total_processed'] <= warmup_count:
-                    model.learn_one(x, usage_amt)
+                    model.learn_one(features, usage_amt)
                     logger.info(
                         f"[WARMUP] Offset={offset} | Route={route_code} | Flag={customer_flag} | "
                         f"Tariff={tariff_number} | Rider={rider} | Transmit={transmit_cnt} | "  
-                        f"Old Route={old_route_code} | Total={total_amount:.2f} | "
+                        f"Total={total_amount:.2f} | "
                         f"Per Person={usage_amt:.2f} | Processed={model.stats['total_processed']}")
                 else:
-                    anomaly, error, y_pred, threshold_used, error_pct = model.is_anomaly(x, usage_amt)
-                    model.learn_one(x, usage_amt)
+                    anomaly, error, y_pred, threshold_used, error_pct = model.is_anomaly(features, usage_amt)
 
                     customer_info = f"({customer_cnt} person)" if customer_cnt > 1 else ""
 
                     if anomaly:
+                        model.model.optimizer = anomaly_optimizer
+                        model.learn_one(features, usage_amt)
+                        model.model.optimizer = original_optimizer
                         model.stats['anomaly_count'] += 1
 
                         if error >= threshold_used * 10:
@@ -140,13 +157,14 @@ def main():
 
                         logger.warning(
                             f"[ANOMALY-{state.upper()}] Offset={offset} | Route={route_code} | Flag={customer_flag} | "
-                            f"Tariff={tariff_number} | Rider={rider} | Transmit={transmit_cnt} | Old Route={old_route_code} | Total={total_amount:.2f} | "
+                            f"Tariff={tariff_number} | Rider={rider} | Transmit={transmit_cnt} | Total={total_amount:.2f} | "
                             f"Per Person={usage_amt:.2f} {customer_info} | Predicted={y_pred:.2f} | Error={error:.2f}({error_pct:.1f}%) | Processed={model.stats['total_processed']}")
 
 
                     if not anomaly:
+                        model.learn_one(features, usage_amt)
                         logger.debug(f"[NORMAL] Offset={offset} | Route={route_code} | Flag={customer_flag} | "
-                                     f"Tariff={tariff_number} | Rider={rider} | Transmit={transmit_cnt} | Old Route={old_route_code} | Total={total_amount:.2f} | "
+                                     f"Tariff={tariff_number} | Rider={rider} | Transmit={transmit_cnt} | Total={total_amount:.2f} | "
                                      f"Per Person={usage_amt:.2f} {customer_info} | "
                                      f"Predicted={y_pred:.2f} | Error={error:.2f} | Processed={model.stats['total_processed']}")
 

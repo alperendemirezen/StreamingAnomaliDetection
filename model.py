@@ -8,16 +8,10 @@ import logging
 
 class AmountPredictor:
     def __init__(self, error_threshold=0.01, learning_rate=0.01):
-        self.model = tree.HoeffdingTreeRegressor(
-            grace_period=20,
-            delta=0.01,
-            tau=0.05,
-            leaf_prediction = 'model',
-            leaf_model=linear_model.LinearRegression(
-                optimizer=optim.SGD(learning_rate)
-            )
-        )
+        self.model = linear_model.LinearRegression(
+            optimizer=optim.SGD(learning_rate),
 
+        )
         self.threshold = error_threshold
 
         self.metrics = {
@@ -96,10 +90,10 @@ class AmountPredictor:
             raise ValueError("route_code cannot be empty")
         cleaned_data['route_code'] = route_code
 
-        old_route_code = str(data['old_route_code']).strip()
-        if not old_route_code or old_route_code == '':
-            raise ValueError("old_route_code cannot be empty")
-        cleaned_data['old_route_code'] = old_route_code
+        # old_route_code = str(data['old_route_code']).strip()
+        # if not old_route_code or old_route_code == '':
+        #     raise ValueError("old_route_code cannot be empty")
+        # cleaned_data['old_route_code'] = old_route_code
 
         customer_flag = str(data['customer_flag']).strip()
         if not customer_flag or customer_flag == '':

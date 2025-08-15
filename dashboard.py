@@ -13,7 +13,6 @@ from contextlib import contextmanager
 
 import config_loader
 
-# Sayfa konfigürasyonu
 st.set_page_config(
     page_title="🚌 Transit Anomaly Dashboard",
     page_icon="🚌",
@@ -21,7 +20,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS ile modern görünüm
 st.markdown("""
 <style>
     .main-header {
@@ -46,10 +44,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# Oracle bağlantısı için context manager
 @contextmanager
 def get_db_connection():
-    """Oracle veritabanı bağlantısını güvenli şekilde yönet"""
     conn = None
     try:
         cfg = config_loader.load_config("config.ini")
@@ -63,62 +59,83 @@ def get_db_connection():
             password=cfg["database"]["password"],
             dsn=dsn,
         )
-        yield conn
     except Exception as e:
         st.error(f"Veritabanı bağlantı hatası: {e}")
-        yield None
+    try:
+        yield conn
     finally:
         if conn is not None:
             try:
                 conn.close()
             except Exception:
-                pass  # Bağlantı zaten kapalı olabilir
+                pass
 
 
-# Model performans verilerini çek
 @st.cache_data(ttl=30)
 def get_model_performance():
-    """Model performansını pkl dosyasından veya loglardan oku"""
     try:
-        # Model pkl dosyası varsa oku
         if os.path.exists("amount_predictor.pkl"):
             import pickle
             with open("amount_predictor.pkl", "rb") as f:
                 snapshot = pickle.load(f)
 
-            stats = snapshot.get("stats", {})
             metrics = snapshot.get("metrics", {})
+            stats = snapshot.get("stats", {})
+
+            mae = metrics.get('mae').get() if metrics.get('mae') and hasattr(metrics.get('mae'), 'get') else 0.0
+            rmse = metrics.get('rmse').get() if metrics.get('rmse') and hasattr(metrics.get('rmse'), 'get') else 0.0
+            r2 = metrics.get('r2').get() if metrics.get('r2') and hasattr(metrics.get('r2'), 'get') else 0.0
+
+            total_processed = stats.get('total_processed', 0)
+            anomaly_count = stats.get('anomaly_count', 0)
+            validation_errors = stats.get('validation_errors', 0)
+
+            anomaly_rate = (anomaly_count / max(total_processed, 1)) * 100
+
+            health_status = "GOOD"
+            issues = []
+
+            if mae > 1.0:
+                health_status = "WARNING"
+                issues.append(f"High MAE: {mae:.3f} TL")
+
+            if r2 < 0.5:
+                health_status = "CRITICAL"
+                issues.append(f"Low R²: {r2:.3f}")
+
+            if anomaly_rate > 5:
+                health_status = "WARNING" if health_status == "GOOD" else health_status
+                issues.append(f"High anomaly rate: {anomaly_rate:.1f}%")
 
             return {
-                'mae': metrics.get('mae', {}).get() if hasattr(metrics.get('mae', {}), 'get') else 0,
-                'rmse': metrics.get('rmse', {}).get() if hasattr(metrics.get('rmse', {}), 'get') else 0,
-                'r2': metrics.get('r2', {}).get() if hasattr(metrics.get('r2', {}), 'get') else 0,
-                'total_processed': stats.get('total_processed', 0),
-                'anomaly_count': stats.get('anomaly_count', 0),
-                'validation_errors': stats.get('validation_errors', 0),
-                'system_health': 'GOOD'  # Bunu hesapla
+                'mae': mae,
+                'rmse': rmse,
+                'r2': r2,
+                'total_processed': total_processed,
+                'anomaly_count': anomaly_count,
+                'validation_errors': validation_errors,
+                'anomaly_rate': anomaly_rate,
+                'system_health': health_status,
+                'issues': issues
             }
     except Exception as e:
         st.warning(f"Model dosyası okunamadı: {e}")
 
-    # Default değerler
     return {
         'mae': 0.0, 'rmse': 0.0, 'r2': 0.0,
         'total_processed': 0, 'anomaly_count': 0,
-        'validation_errors': 0, 'system_health': 'UNKNOWN'
+        'validation_errors': 0, 'anomaly_rate': 0.0,
+        'system_health': 'UNKNOWN', 'issues': []
     }
 
 
-# Oracle'dan anomali verilerini çek
 @st.cache_data(ttl=30)
 def get_anomaly_data():
-    """Oracle'dan anomali verilerini çek"""
     try:
         with get_db_connection() as conn:
             if not conn:
                 return pd.DataFrame()
 
-            # Anomali tablosundan veri çek - DOĞRU TABLO VE KOLON İSİMLERİ
             query = """
             SELECT 
                 boarding_date_time,
@@ -133,12 +150,17 @@ def get_anomaly_data():
                 state,
                 msg_offset
             FROM detected_anomalies 
-            WHERE boarding_date_time >= SYSDATE - 1
-            ORDER BY boarding_date_time DESC
+            WHERE TO_DATE(boarding_date_time, 'YYYY-MM-DD HH24:MI:SS') >= SYSDATE - 1
+            ORDER BY TO_DATE(boarding_date_time, 'YYYY-MM-DD HH24:MI:SS') DESC
             """
 
             df = pd.read_sql(query, conn)
-            df['boarding_date_time'] = pd.to_datetime(df['boarding_date_time'])
+
+            df.columns = df.columns.str.lower()
+
+            if 'boarding_date_time' in df.columns:
+                df['boarding_date_time'] = pd.to_datetime(df['boarding_date_time'], errors='coerce')
+
             return df
 
     except Exception as e:
@@ -146,29 +168,33 @@ def get_anomaly_data():
         return pd.DataFrame()
 
 
-# Zaman bazlı trend verileri
 @st.cache_data(ttl=30)
 def get_time_series_data():
-    """Saatlik anomali trendini çek"""
     try:
         with get_db_connection() as conn:
             if not conn:
                 return pd.DataFrame()
 
-            # ORACLE SQL SYNTAX DÜZELTME
             query = """
             SELECT 
-                TRUNC(boarding_date_time, 'HH') as hour,
-                COUNT(*) as anomaly_count,
-                AVG(error_percentage) as avg_error_pct
+                TO_CHAR(TO_DATE(SUBSTR(boarding_date_time, 1, 13) || ':00:00', 'YYYY-MM-DD HH24:MI:SS'), 'YYYY-MM-DD HH24:MI:SS') AS hour_str,
+                COUNT(*) AS anomaly_count,
+                AVG(error_percentage) AS avg_error_pct
             FROM detected_anomalies
-            WHERE boarding_date_time >= SYSDATE - 1
-            GROUP BY TRUNC(boarding_date_time, 'HH')
-            ORDER BY hour
+            WHERE TO_DATE(boarding_date_time, 'YYYY-MM-DD HH24:MI:SS') >= SYSDATE - 1
+            GROUP BY TO_CHAR(TO_DATE(SUBSTR(boarding_date_time, 1, 13) || ':00:00', 'YYYY-MM-DD HH24:MI:SS'), 'YYYY-MM-DD HH24:MI:SS')
+            ORDER BY hour_str
             """
 
             df = pd.read_sql(query, conn)
-            df['hour'] = pd.to_datetime(df['hour'])
+
+
+            df.columns = df.columns.str.lower()
+
+            if 'hour_str' in df.columns:
+                df['hour'] = pd.to_datetime(df['hour_str'])
+                df = df.drop('hour_str', axis=1)
+
             return df
 
     except Exception as e:
@@ -176,10 +202,8 @@ def get_time_series_data():
         return pd.DataFrame()
 
 
-# Route bazlı istatistikler
 @st.cache_data(ttl=30)
 def get_route_stats():
-    """Route bazlı anomali istatistikleri"""
     try:
         with get_db_connection() as conn:
             if not conn:
@@ -188,17 +212,23 @@ def get_route_stats():
             query = """
             SELECT 
                 route_code,
-                COUNT(*) as total_anomalies,
-                AVG(usage_amount) as avg_amount,
-                AVG(error_percentage) as avg_error_pct,
-                MAX(boarding_date_time) as last_anomaly
+                COUNT(*) AS total_anomalies,
+                AVG(usage_amount) AS avg_amount,
+                AVG(error_percentage) AS avg_error_pct,
+                MAX(boarding_date_time) AS last_anomaly
             FROM detected_anomalies
-            WHERE boarding_date_time >= SYSDATE - 7
+            WHERE TO_DATE(boarding_date_time, 'YYYY-MM-DD HH24:MI:SS') >= SYSDATE - 7
             GROUP BY route_code
             ORDER BY total_anomalies DESC
             """
 
             df = pd.read_sql(query, conn)
+
+            df.columns = df.columns.str.lower()
+
+            if 'last_anomaly' in df.columns:
+                df['last_anomaly'] = pd.to_datetime(df['last_anomaly'], errors='coerce')
+
             return df
 
     except Exception as e:
@@ -206,24 +236,47 @@ def get_route_stats():
         return pd.DataFrame()
 
 
-# Streamlit uygulaması başlangıcı
-def main():
-    # Sidebar - Konfigürasyon
-    st.sidebar.header("⚙️ Dashboard Ayarları")
-    auto_refresh = st.sidebar.checkbox("🔄 Otomatik Yenileme", value=False)  # Başlangıçta kapalı
-    refresh_interval = st.sidebar.slider("Yenileme Süresi (saniye)", 5, 60, 30)
-    date_range = st.sidebar.date_input("📅 Tarih Aralığı",
-                                       value=[datetime.now() - timedelta(days=1), datetime.now()])
+@st.cache_data(ttl=30)
+def get_state_distribution():
+    try:
+        with get_db_connection() as conn:
+            if not conn:
+                return pd.DataFrame()
 
-    # Ana başlık
+            query = """
+            SELECT 
+                state,
+                COUNT(*) AS count,
+                AVG(error_percentage) AS avg_error_pct
+            FROM detected_anomalies
+            WHERE TO_DATE(boarding_date_time, 'YYYY-MM-DD HH24:MI:SS') >= SYSDATE - 1
+            GROUP BY state
+            ORDER BY count DESC
+            """
+
+            df = pd.read_sql(query, conn)
+            df.columns = df.columns.str.lower()
+            return df
+
+    except Exception as e:
+        st.error(f"State dağılımı alınırken hata: {e}")
+        return pd.DataFrame()
+
+
+def main():
+    st.sidebar.header("⚙️ Dashboard Ayarları")
+    auto_refresh = st.sidebar.checkbox("🔄 Otomatik Yenileme", value=False)
+    refresh_interval = st.sidebar.slider("Yenileme Süresi (saniye)", 5, 60, 30)
+    date_range = st.sidebar.date_input(
+        "📅 Tarih Aralığı",
+        value=[datetime.now() - timedelta(days=1), datetime.now()]
+    )
+
     st.markdown('<h1 class="main-header">🚌 Transit Anomaly Detection Dashboard</h1>',
                 unsafe_allow_html=True)
 
-    # Model performans verileri
     perf_data = get_model_performance()
-    anomaly_rate = (perf_data['anomaly_count'] / max(perf_data['total_processed'], 1) * 100)
 
-    # KPI Kartları
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
@@ -236,16 +289,29 @@ def main():
 
     with col3:
         st.metric("📈 Anomali Oranı",
-                  f"{anomaly_rate:.2f}%")
+                  f"{perf_data['anomaly_rate']:.2f}%")
 
     with col4:
-        health_color = "normal" if perf_data['system_health'] == 'GOOD' else "inverse"
-        st.metric("💚 Sistem Sağlığı", perf_data['system_health'])
+        health_color = "🟢" if perf_data['system_health'] == 'GOOD' else (
+            "🟡" if perf_data['system_health'] == 'WARNING' else "🔴")
+        st.metric("💚 Sistem Sağlığı", f"{health_color} {perf_data['system_health']}")
 
-    # Ana grafikler
+    if perf_data['system_health'] != 'UNKNOWN':
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("🎯 MAE", f"{perf_data['mae']:.3f} TL")
+        with col2:
+            st.metric("📊 RMSE", f"{perf_data['rmse']:.3f} TL")
+        with col3:
+            st.metric("📈 R² Score", f"{perf_data['r2']:.3f}")
+
+        if perf_data['issues']:
+            st.warning("⚠️ **Tespit Edilen Sorunlar:**")
+            for issue in perf_data['issues']:
+                st.write(f"• {issue}")
+
     st.markdown("---")
 
-    # İki sütunlu layout
     col_left, col_right = st.columns([2, 1])
 
     with col_left:
@@ -265,7 +331,6 @@ def main():
     with col_right:
         st.subheader("🎯 Model Performansı")
 
-        # R² Score gauge
         r2_score = perf_data['r2'] * 100 if perf_data['r2'] > 0 else 0
 
         fig_gauge = go.Figure(go.Indicator(
@@ -282,11 +347,13 @@ def main():
         fig_gauge.update_layout(height=300)
         st.plotly_chart(fig_gauge, use_container_width=True)
 
-        # MAE ve RMSE
-        st.metric("🎯 MAE", f"{perf_data['mae']:.3f} TL")
-        st.metric("📊 RMSE", f"{perf_data['rmse']:.3f} TL")
+        state_data = get_state_distribution()
+        if not state_data.empty:
+            fig_pie = px.pie(state_data, values='count', names='state',
+                             title="Anomali Türü Dağılımı")
+            fig_pie.update_layout(height=250)
+            st.plotly_chart(fig_pie, use_container_width=True)
 
-    # Route analizi
     st.markdown("---")
     st.subheader("🗺️ Route Bazlı Analiz")
 
@@ -296,7 +363,6 @@ def main():
         col1, col2 = st.columns(2)
 
         with col1:
-            # En problematik route'lar
             fig_routes = px.bar(route_data.head(10),
                                 x='route_code', y='total_anomalies',
                                 title="En Çok Anomali Olan Route'lar",
@@ -306,7 +372,6 @@ def main():
             st.plotly_chart(fig_routes, use_container_width=True)
 
         with col2:
-            # Error yüzdesi dağılımı
             fig_scatter = px.scatter(route_data,
                                      x='total_anomalies', y='avg_error_pct',
                                      size='avg_amount',
@@ -317,14 +382,12 @@ def main():
     else:
         st.info("Route analizi için henüz yeterli veri bulunmuyor.")
 
-    # Son anomaliler tablosu
     st.markdown("---")
     st.subheader("🚨 Son Tespit Edilen Anomaliler")
 
     recent_anomalies = get_anomaly_data()
 
     if not recent_anomalies.empty:
-        # State'e göre renklendirme fonksiyonu
         def highlight_state(row):
             if row['state'] == 'critical':
                 return ['background-color: #ffebee'] * len(row)
@@ -334,12 +397,14 @@ def main():
                 return ['background-color: #f3e5f5'] * len(row)
             return [''] * len(row)
 
-        # Tabloyu formatla ve göster - DOĞRU KOLON İSİMLERİ
         display_columns = ['boarding_date_time', 'route_code', 'customer_flag',
                            'usage_amount', 'predicted_amount', 'error_percentage', 'state']
 
-        styled_df = recent_anomalies[display_columns].head(50).style.apply(highlight_state, axis=1)
-        st.dataframe(styled_df, use_container_width=True, height=400)
+        if all(col in recent_anomalies.columns for col in display_columns):
+            styled_df = recent_anomalies[display_columns].head(50).style.apply(highlight_state, axis=1)
+            st.dataframe(styled_df, use_container_width=True, height=400)
+        else:
+            st.dataframe(recent_anomalies.head(50), use_container_width=True, height=400)
     else:
         st.info("Son 24 saatte anomali tespit edilmemiş.")
 
@@ -353,23 +418,21 @@ def main():
     with col2:
         if perf_data['system_health'] == 'GOOD':
             st.success("✅ Sistem Normal")
-        else:
+        elif perf_data['system_health'] == 'WARNING':
             st.warning("⚠️ Dikkat Gerekli")
+        else:
+            st.error("🚨 Kritik Durum")
 
     with col3:
-        # Model dosyası yaşını hesapla
         if os.path.exists("amount_predictor.pkl"):
             model_age = datetime.now() - datetime.fromtimestamp(os.path.getmtime("amount_predictor.pkl"))
             st.metric("⚡ Model Yaşı", f"{model_age.seconds // 3600}h {(model_age.seconds // 60) % 60}m")
         else:
             st.metric("⚡ Model", "Bulunamadı")
 
-    # Otomatik yenileme - sadece checkbox işaretliyse
     if auto_refresh:
         time.sleep(refresh_interval)
         st.rerun()
 
-
-# Uygulamayı çalıştır
 if __name__ == "__main__":
     main()

@@ -90,10 +90,10 @@ class AmountPredictor:
             raise ValueError("route_code cannot be empty")
         cleaned_data['route_code'] = route_code
 
-        # old_route_code = str(data['old_route_code']).strip()
-        # if not old_route_code or old_route_code == '':
-        #     raise ValueError("old_route_code cannot be empty")
-        # cleaned_data['old_route_code'] = old_route_code
+        old_route_code = str(data['old_route_code']).strip()
+        if not old_route_code or old_route_code == '':
+            raise ValueError("old_route_code cannot be empty")
+        cleaned_data['old_route_code'] = old_route_code
 
         customer_flag = str(data['customer_flag']).strip()
         if not customer_flag or customer_flag == '':

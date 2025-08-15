@@ -125,7 +125,11 @@ class AmountPredictor:
 
         dynamic_threshold = y_pred * self.threshold
 
-        return error > dynamic_threshold, error, y_pred, dynamic_threshold, error_percentage
+        if y == 0:
+            return error > 10, error, y_pred, 10, error_percentage
+        else:
+            return error > dynamic_threshold, error, y_pred, dynamic_threshold, error_percentage
+
     def get_performance_report(self):
         anomaly_rate = (self.stats['anomaly_count'] / max(self.stats['total_processed'], 1)) * 100
 

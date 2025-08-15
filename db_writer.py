@@ -14,14 +14,16 @@ class OracleAnomalyWriter:
             self.logger.error(f"Failed to connect to Oracle database: {e}")
             raise
 
-    def insert_anomaly(self, data: dict, msg_offset: int, state: str):
+    def insert_anomaly(self, data: dict, msg_offset: int, state: str, predicted_amount: float, error_amount: float, error_percentage: float):
         try:
             sql = """
                        INSERT INTO detected_anomalies (
-                           msg_offset, state, route_code, customer_flag, tariff_number, rider,
-                           usage_amount, card_no, sam_seq_no, trans_flag, tap_id, boarding_date_time
-                       ) VALUES (:msg_offset, :state, :route_code, :customer_flag, :tariff_number, :rider,
-                                 :usage_amount, :card_no, :sam_seq_no, :trans_flag, :tap_id, :boarding_date_time)
+                           msg_offset, state, route_code, customer_flag, tariff_number,
+                            rider,usage_amount, card_no, sam_seq_no, trans_flag, tap_id,
+                             boarding_date_time, predicted_amount, error_amount, error_percentage
+                       ) VALUES (:msg_offset, :state, :route_code, :customer_flag, :tariff_number, 
+                       :rider,:usage_amount, :card_no, :sam_seq_no, :trans_flag, :tap_id, 
+                       :boarding_date_time, :predicted_amount, :error_amount, :error_percentage)
                    """
             params = {
                 "msg_offset": msg_offset,
@@ -36,11 +38,12 @@ class OracleAnomalyWriter:
                 "trans_flag": data.get("trans_flag"),
                 "tap_id": data.get("tap_id"),
                 "boarding_date_time": data.get("boarding_date_time"),
+                "predicted_amount": predicted_amount,
+                "error_amount": error_amount,
+                "error_percentage": error_percentage
             }
             self.cursor.execute(sql, params)
             self.conn.commit()
-            self.logger.debug(
-                f"Anomaly inserted successfully: offset={msg_offset}, state={state}, route={data.get('route_code')}")
 
         except oracledb.DatabaseError as e:
             self.logger.error(f"Database insert error for offset {msg_offset}: {e}")

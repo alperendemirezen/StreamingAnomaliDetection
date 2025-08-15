@@ -141,19 +141,26 @@ def main():
                     customer_info = f"({customer_cnt} person)" if customer_cnt > 1 else ""
 
                     if anomaly:
-                        model.model.optimizer = anomaly_optimizer
-                        model.learn_one(features, usage_amt)
-                        model.model.optimizer = original_optimizer
-                        model.stats['anomaly_count'] += 1
 
-                        if error >= threshold_used * 10:
+
+                        if error >= threshold_used * 6:
+                            model.model.optimizer = anomaly_optimizer
+                            model.learn_one(features, usage_amt)
+                            model.model.optimizer = original_optimizer
                             state = "critical"
-                        elif error >= threshold_used * 5:
+
+                        elif error >= threshold_used * 3:
+                            model.model.optimizer = anomaly_optimizer
+                            model.learn_one(features, usage_amt)
+                            model.model.optimizer = original_optimizer
                             state = "major"
+
                         else:
+                            model.learn_one(features, usage_amt)
                             state = "minor"
 
-                            db_writer.insert_anomaly(cleaned_data, msg.offset, state)
+                        model.stats['anomaly_count'] += 1
+                        db_writer.insert_anomaly(cleaned_data, msg.offset, state, y_pred, error, error_pct)
 
                         logger.warning(
                             f"[ANOMALY-{state.upper()}] Offset={offset} | Route={route_code} | Flag={customer_flag} | "
@@ -172,7 +179,7 @@ def main():
 
             except ValueError as e:
                 model.stats['validation_errors'] += 1
-                db_writer.insert_anomaly(raw_data, msg.offset, "invalid")
+                db_writer.insert_anomaly(raw_data, msg.offset, "invalid", 0, 0, 0)
                 logger.error(f"[VALIDATION ERROR] Offset={msg.offset} | Error: {e}")
                 continue
 

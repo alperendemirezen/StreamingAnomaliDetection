@@ -103,6 +103,7 @@ def main():
 
                 stage = cleaned_data['stage']
                 vehicle_type = cleaned_data['vehicle_type']
+                #Loglara bu 2 si eklenmedi eklenecek!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
                 customer_cnt = cleaned_data['customer_cnt']
                 total_amount = cleaned_data['amount']
@@ -114,14 +115,15 @@ def main():
                     f"tariff_{tariff_number}": 1,
                     f"rider_{rider}": 1,
                     f"transmit_{transmit_cnt}": 1,
-                    f"oldRoute_{old_route_code}": 1,
+                    f"stage_{stage}": 1,
+                    f"vehicle_type_{vehicle_type}": 1,
 
                     f"route_customer_{route_code}_{customer_flag}": 1,
                     f"route_tariff_{route_code}_{tariff_number}": 1,
                     f"customer_tariff_{customer_flag}_{tariff_number}": 1,
                     f"route_oldRoute_{route_code}_{old_route_code}": 1,
 
-                    f"full_combo_{route_code}_{customer_flag}_{tariff_number}_{rider}_{transmit_cnt}_{old_route_code}": 1
+                    f"full_combo_{route_code}_{customer_flag}_{tariff_number}_{rider}_{transmit_cnt}_{old_route_code}_{vehicle_type}_{stage}": 1
                 }
                 offset = msg.offset
 
@@ -162,7 +164,7 @@ def main():
                             state = "minor"
 
                         model.stats['anomaly_count'] += 1
-                        db_writer.insert_anomaly(cleaned_data, msg.offset, state, y_pred, error, error_pct)
+                        #db_writer.insert_anomaly(cleaned_data, msg.offset, state, y_pred, error, error_pct)
 
                         logger.warning(
                             f"[ANOMALY-{state.upper()}] Offset={offset} | Route={route_code} | Flag={customer_flag} | "
@@ -181,7 +183,7 @@ def main():
 
             except ValueError as e:
                 model.stats['validation_errors'] += 1
-                db_writer.insert_anomaly(raw_data, msg.offset, "invalid", 0, 0, 0)
+                #db_writer.insert_anomaly(raw_data, msg.offset, "invalid", 0, 0, 0)
                 logger.error(f"[VALIDATION ERROR] Offset={msg.offset} | Error: {e}")
                 continue
 

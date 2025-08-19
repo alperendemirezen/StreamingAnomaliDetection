@@ -1,17 +1,14 @@
 import os
 import pickle
 
-from river import linear_model, metrics, optim, tree
+from river import linear_model, metrics, optim, preprocessing
 from datetime import datetime
 import logging
 
-
 class AmountPredictor:
     def __init__(self, error_threshold=0.01, learning_rate=0.01):
-        self.model = linear_model.LinearRegression(
-            optimizer=optim.SGD(learning_rate),
+        self.model = linear_model.LinearRegression(optimizer=optim.SGD(learning_rate))
 
-        )
         self.threshold = error_threshold
 
         self.metrics = {
@@ -61,6 +58,10 @@ class AmountPredictor:
         if data.get('vehicle_type') is None:
             cleaned_data['vehicle_type'] = '0'
 
+        if data.get('old_route_code') is None:
+            cleaned_data['old_route_code'] = '0'
+
+
         try:
             amount = float(str(data['usage_amt']).lstrip("0") or 0)
             cleaned_data['amount'] = amount
@@ -90,10 +91,10 @@ class AmountPredictor:
             raise ValueError("route_code cannot be empty")
         cleaned_data['route_code'] = route_code
 
-        old_route_code = str(data['old_route_code']).strip()
-        if not old_route_code or old_route_code == '':
-            raise ValueError("old_route_code cannot be empty")
-        cleaned_data['old_route_code'] = old_route_code
+        # old_route_code = str(data['old_route_code']).strip()
+        # if not old_route_code or old_route_code == '':
+        #     raise ValueError("old_route_code cannot be empty")
+        # cleaned_data['old_route_code'] = old_route_code
 
         customer_flag = str(data['customer_flag']).strip()
         if not customer_flag or customer_flag == '':
